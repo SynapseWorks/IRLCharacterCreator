@@ -51,6 +51,24 @@ function requireSupabase() {
   return supabase;
 }
 
+function merchantFromUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function ensureCharacter(user: User, characterName: string) {
   const supabase = requireSupabase();
   const normalizedName = characterName.trim() || "My Character";
@@ -108,7 +126,7 @@ async function insertProduct(user: User, item: ProductItem) {
       user_id: user.id,
       source_url: sourceUrl,
       canonical_url: sourceUrl,
-      merchant: sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, "") : null,
+      merchant: merchantFromUrl(sourceUrl),
       name: item.name,
       brand: item.brand || null,
       category: item.category,
@@ -233,7 +251,7 @@ export async function loadCloudBuilds(user: User): Promise<CharacterBuild[]> {
   }));
 }
 
-export async function getCharacterBasePhotoUrl(user: User, characterName: string) {
+export async function getCharacterBasePhotoDataUrl(user: User, characterName: string) {
   const supabase = requireSupabase();
   const { data: characters, error } = await supabase
     .from("characters")
@@ -248,9 +266,9 @@ export async function getCharacterBasePhotoUrl(user: User, characterName: string
   const path = characters?.[0]?.base_photo_path as string | undefined;
   if (!path) return null;
 
-  const { data, error: signedError } = await supabase.storage
+  const { data, error: downloadError } = await supabase.storage
     .from("base-photos")
-    .createSignedUrl(path, 60 * 60);
-  if (signedError) throw signedError;
-  return data.signedUrl;
+    .download(path);
+  if (downloadError) throw downloadError;
+  return blobToDataUrl(data);
 }
