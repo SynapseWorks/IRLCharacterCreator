@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { CharacterStats } from "./CharacterStats";
 import { EquipmentSlot } from "./EquipmentSlot";
 import { ProductDrawer } from "./ProductDrawer";
@@ -35,16 +35,40 @@ const MAKEUP: { id: MakeupPreset; label: string }[] = [
 
 const STORAGE_KEY = "irlcc:saved-builds:v0";
 
+async function preparePhoto(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file.");
+  if (file.size > 15 * 1024 * 1024) throw new Error("Please choose an image under 15 MB.");
+
+  const bitmap = await createImageBitmap(file);
+  const maxDimension = 1600;
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser could not prepare the image.");
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  let result = canvas.toDataURL("image/jpeg", 0.88);
+  if (result.length > 5_500_000) result = canvas.toDataURL("image/jpeg", 0.72);
+  if (result.length > 5_500_000) throw new Error("The prepared image is still too large. Try a smaller photo.");
+  return result;
+}
+
 export function CharacterCreator() {
   const [characterName, setCharacterName] = useState("My Character");
   const [buildName, setBuildName] = useState("Everyday Creative");
-  const [photoUrl, setPhotoUrl] = useState<string>("");
+  const [basePhotoDataUrl, setBasePhotoDataUrl] = useState("");
+  const [generatedImageUrl, setGeneratedImageUrl] = useState("");
   const [background, setBackground] = useState<BackgroundPreset>("blush-studio");
   const [makeup, setMakeup] = useState<MakeupPreset>("natural");
   const [equipment, setEquipment] = useState<Equipment>({});
   const [activeCategory, setActiveCategory] = useState<ProductCategory | null>(null);
   const [savedBuilds, setSavedBuilds] = useState<CharacterBuild[]>([]);
   const [renderMessage, setRenderMessage] = useState("");
+  const [rendering, setRendering] = useState(false);
+  const [renderConsent, setRenderConsent] = useState(false);
   const stats = useMemo(() => calculateStats(equipment), [equipment]);
 
   useEffect(() => {
@@ -56,17 +80,28 @@ export function CharacterCreator() {
     }
   }, []);
 
-  function onPhoto(event: ChangeEvent<HTMLInputElement>) {
+  function invalidateRender() {
+    setGeneratedImageUrl("");
+    setRenderMessage("");
+  }
+
+  async function onPhoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (photoUrl.startsWith("blob:")) URL.revokeObjectURL(photoUrl);
-    setPhotoUrl(URL.createObjectURL(file));
-    setRenderMessage("");
+    try {
+      setRenderMessage("Preparing photo…");
+      const prepared = await preparePhoto(file);
+      setBasePhotoDataUrl(prepared);
+      setGeneratedImageUrl("");
+      setRenderMessage("");
+    } catch (error) {
+      setRenderMessage(error instanceof Error ? error.message : "Could not prepare that photo.");
+    }
   }
 
   function equip(item: ProductItem) {
     setEquipment((current) => ({ ...current, [item.category]: item }));
-    setRenderMessage("");
+    invalidateRender();
   }
 
   function remove(category: ProductCategory) {
@@ -76,7 +111,17 @@ export function CharacterCreator() {
       return next;
     });
     setActiveCategory(null);
-    setRenderMessage("");
+    invalidateRender();
+  }
+
+  function chooseBackground(value: BackgroundPreset) {
+    setBackground(value);
+    invalidateRender();
+  }
+
+  function chooseMakeup(value: MakeupPreset) {
+    setMakeup(value);
+    invalidateRender();
   }
 
   function saveBuild() {
@@ -100,19 +145,47 @@ export function CharacterCreator() {
     setBackground(build.background);
     setMakeup(build.makeup);
     setEquipment(build.equipment);
-    setRenderMessage("Build loaded. Upload a base photo for this session if needed.");
+    setGeneratedImageUrl("");
+    setRenderMessage("Build loaded. Your base photo stays only in this browser session in V0.");
   }
 
   async function generatePreview() {
-    setRenderMessage("Building render plan…");
-    const response = await fetch("/api/render", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ characterName, buildName, background, makeup, equipment, hasPhoto: Boolean(photoUrl) }),
-    });
-    const data = await response.json();
-    setRenderMessage(data.message ?? "Render plan ready.");
+    if (!basePhotoDataUrl) {
+      setRenderMessage("Upload a base photo first.");
+      return;
+    }
+    if (!renderConsent) {
+      setRenderMessage("Please confirm the render privacy notice before generating.");
+      return;
+    }
+
+    setRendering(true);
+    setRenderMessage("Building your character render…");
+    try {
+      const response = await fetch("/api/render", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          characterName,
+          buildName,
+          background,
+          makeup,
+          equipment,
+          basePhotoDataUrl,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Character rendering failed.");
+      if (typeof data.imageDataUrl === "string") setGeneratedImageUrl(data.imageDataUrl);
+      setRenderMessage(data.message ?? "Render plan ready.");
+    } catch (error) {
+      setRenderMessage(error instanceof Error ? error.message : "Character rendering failed.");
+    } finally {
+      setRendering(false);
+    }
   }
+
+  const displayedImage = generatedImageUrl || basePhotoDataUrl;
 
   return (
     <main className="app-shell">
@@ -123,14 +196,14 @@ export function CharacterCreator() {
         </div>
         <div className="topbar-actions">
           <button className="secondary-button" onClick={saveBuild}>Save build</button>
-          <button className="primary-button" onClick={generatePreview}>Generate look ✨</button>
+          <button className="primary-button" onClick={generatePreview} disabled={rendering}>{rendering ? "Generating…" : "Generate look ✨"}</button>
         </div>
       </header>
 
       <section className="identity-bar">
         <label>Character name<input value={characterName} onChange={(e) => setCharacterName(e.target.value)} /></label>
         <label>Build name<input value={buildName} onChange={(e) => setBuildName(e.target.value)} /></label>
-        <label className="upload-button">Base photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={onPhoto} /><span>{photoUrl ? "Change photo" : "Upload photo"}</span></label>
+        <label className="upload-button">Base photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={onPhoto} /><span>{basePhotoDataUrl ? "Change photo" : "Upload photo"}</span></label>
       </section>
 
       <div className="creator-grid">
@@ -138,7 +211,8 @@ export function CharacterCreator() {
           <div className="character-title"><span>{characterName || "My Character"}</span><small>{buildName || "Untitled Build"}</small></div>
           <div className={`character-stage background-${background}`}>
             <div className="avatar-frame">
-              {photoUrl ? <img src={photoUrl} alt={`${characterName} base`} /> : <div className="avatar-placeholder"><span>＋</span><strong>Upload your character photo</strong><small>A clear, well-lit full or ¾-body photo works best.</small></div>}
+              {displayedImage ? <img src={displayedImage} alt={`${characterName} ${generatedImageUrl ? "generated look" : "base"}`} /> : <div className="avatar-placeholder"><span>＋</span><strong>Upload your character photo</strong><small>A clear, well-lit full or ¾-body photo works best.</small></div>}
+              {generatedImageUrl && <span className="generated-badge">Generated look</span>}
             </div>
             {PRODUCT_CATEGORIES.map((category) => (
               <EquipmentSlot key={category} category={category} item={equipment[category]} style={SLOT_POSITIONS[category]} onClick={() => setActiveCategory(category)} />
@@ -153,13 +227,19 @@ export function CharacterCreator() {
           <section className="control-card">
             <div className="section-eyebrow">Scene</div>
             <h2>Background</h2>
-            <div className="choice-grid">{BACKGROUNDS.map((option) => <button key={option.id} className={background === option.id ? "selected" : ""} onClick={() => setBackground(option.id)}>{option.label}</button>)}</div>
+            <div className="choice-grid">{BACKGROUNDS.map((option) => <button key={option.id} className={background === option.id ? "selected" : ""} onClick={() => chooseBackground(option.id)}>{option.label}</button>)}</div>
           </section>
 
           <section className="control-card">
             <div className="section-eyebrow">Styling</div>
             <h2>Makeup direction</h2>
-            <div className="choice-grid">{MAKEUP.map((option) => <button key={option.id} className={makeup === option.id ? "selected" : ""} onClick={() => setMakeup(option.id)}>{option.label}</button>)}</div>
+            <div className="choice-grid">{MAKEUP.map((option) => <button key={option.id} className={makeup === option.id ? "selected" : ""} onClick={() => chooseMakeup(option.id)}>{option.label}</button>)}</div>
+          </section>
+
+          <section className="control-card">
+            <div className="section-eyebrow">Render privacy</div>
+            <h2>Before generating</h2>
+            <label className="consent-row"><input type="checkbox" checked={renderConsent} onChange={(e) => setRenderConsent(e.target.checked)} /><span>I understand that Generate sends my prepared photo and equipped product references to the configured image provider. Saved V0 build metadata does not include my base photo.</span></label>
           </section>
 
           <section className="control-card">
