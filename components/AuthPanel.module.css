@@ -1,0 +1,76 @@
+.panel {
+  max-width: 1480px;
+  margin: 0 auto 14px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: space-between;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, .9);
+  background: rgba(255, 255, 255, .78);
+  box-shadow: 0 14px 40px rgba(77, 54, 63, .08);
+}
+
+.panel > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panel strong {
+  font-size: 13px;
+}
+
+.panel span,
+.message {
+  color: #746b70;
+  font-size: 11px;
+}
+
+.muted {
+  opacity: .78;
+}
+
+.form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.form input {
+  min-width: 230px;
+  padding: 10px 12px;
+  border: 1px solid #e8dde1;
+  border-radius: 11px;
+  background: white;
+  outline: none;
+}
+
+.form input:focus {
+  border-color: #b995a1;
+  box-shadow: 0 0 0 3px rgba(168, 95, 115, .1);
+}
+
+.message {
+  max-width: 300px;
+}
+
+@media (max-width: 760px) {
+  .panel,
+  .form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .form {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .form input {
+    min-width: 0;
+    width: 100%;
+  }
+}
