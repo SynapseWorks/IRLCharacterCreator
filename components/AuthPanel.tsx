@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase-browser";
+import styles from "./AuthPanel.module.css";
 
 type AuthPanelProps = {
   onUserChange?: (user: User | null) => void;
@@ -71,7 +72,7 @@ export function AuthPanel({ onUserChange }: AuthPanelProps) {
 
   if (!configured || !supabase) {
     return (
-      <section className="auth-panel auth-panel-muted">
+      <section className={`${styles.panel} ${styles.muted}`}>
         <div>
           <strong>Guest prototype</strong>
           <span>Add the Supabase environment variables to enable accounts and cloud saves.</span>
@@ -82,7 +83,7 @@ export function AuthPanel({ onUserChange }: AuthPanelProps) {
 
   if (user) {
     return (
-      <section className="auth-panel">
+      <section className={styles.panel}>
         <div>
           <strong>Cloud save on</strong>
           <span>{user.email ?? "Signed in"}</span>
@@ -93,16 +94,16 @@ export function AuthPanel({ onUserChange }: AuthPanelProps) {
   }
 
   return (
-    <section className="auth-panel">
+    <section className={styles.panel}>
       <div>
         <strong>Save your character</strong>
         <span>Sign in with a magic link. No password needed.</span>
       </div>
-      <form className="auth-form" onSubmit={requestMagicLink}>
+      <form className={styles.form} onSubmit={requestMagicLink}>
         <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
         <button className="secondary-button" disabled={busy}>{busy ? "Sending…" : "Email me a magic link"}</button>
       </form>
-      {message && <small className="auth-message">{message}</small>}
+      {message && <small className={styles.message}>{message}</small>}
     </section>
   );
 }
