@@ -1,12 +1,15 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { AuthPanel } from "./AuthPanel";
 import { CharacterStats } from "./CharacterStats";
 import { EquipmentSlot } from "./EquipmentSlot";
 import { ProductDrawer } from "./ProductDrawer";
 import type { BackgroundPreset, CharacterBuild, Equipment, MakeupPreset, ProductCategory, ProductItem } from "@/lib/types";
 import { PRODUCT_CATEGORIES } from "@/lib/types";
 import { calculateStats, formatMoney } from "@/lib/stats";
+import { getCharacterBasePhotoDataUrl, loadCloudBuilds, saveBuildToCloud } from "@/lib/persistence";
 
 const SLOT_POSITIONS: Record<ProductCategory, { left: string; top: string }> = {
   hat: { left: "3%", top: "7%" },
@@ -66,18 +69,46 @@ export function CharacterCreator() {
   const [equipment, setEquipment] = useState<Equipment>({});
   const [activeCategory, setActiveCategory] = useState<ProductCategory | null>(null);
   const [savedBuilds, setSavedBuilds] = useState<CharacterBuild[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [renderMessage, setRenderMessage] = useState("");
   const [rendering, setRendering] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [renderConsent, setRenderConsent] = useState(false);
   const stats = useMemo(() => calculateStats(equipment), [equipment]);
 
-  useEffect(() => {
+  const loadLocalBuilds = useCallback(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setSavedBuilds(JSON.parse(stored));
+      setSavedBuilds(stored ? JSON.parse(stored) : []);
     } catch {
-      // Ignore corrupt/local-storage-disabled state in prototype mode.
+      setSavedBuilds([]);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      loadLocalBuilds();
+      return;
+    }
+
+    let active = true;
+    setRenderMessage("Loading your cloud builds…");
+    loadCloudBuilds(currentUser)
+      .then((builds) => {
+        if (!active) return;
+        setSavedBuilds(builds);
+        setRenderMessage(builds.length ? "Cloud builds loaded." : "Cloud save is ready. Save your first build!");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setRenderMessage(error instanceof Error ? error.message : "Could not load cloud builds.");
+      });
+
+    return () => { active = false; };
+  }, [currentUser, loadLocalBuilds]);
+
+  const handleUserChange = useCallback((user: User | null) => {
+    setCurrentUser(user);
   }, []);
 
   function invalidateRender() {
@@ -124,7 +155,8 @@ export function CharacterCreator() {
     invalidateRender();
   }
 
-  function saveBuild() {
+  async function saveBuild() {
+    setSaving(true);
     const build: CharacterBuild = {
       id: crypto.randomUUID(),
       characterName: characterName.trim() || "My Character",
@@ -134,19 +166,56 @@ export function CharacterCreator() {
       equipment,
       createdAt: new Date().toISOString(),
     };
-    const next = [build, ...savedBuilds].slice(0, 12);
-    setSavedBuilds(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+
+    try {
+      if (currentUser) {
+        await saveBuildToCloud({
+          user: currentUser,
+          characterName: build.characterName,
+          buildName: build.buildName,
+          background,
+          makeup,
+          equipment,
+          basePhotoDataUrl,
+        });
+        const cloudBuilds = await loadCloudBuilds(currentUser);
+        setSavedBuilds(cloudBuilds);
+        setRenderMessage("Build saved to your private cloud wardrobe ✨");
+      } else {
+        const next = [build, ...savedBuilds].slice(0, 12);
+        setSavedBuilds(next);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        setRenderMessage("Build saved in this browser. Sign in to enable private cloud saves.");
+      }
+    } catch (error) {
+      setRenderMessage(error instanceof Error ? error.message : "Could not save this build.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function loadBuild(build: CharacterBuild) {
+  async function loadBuild(build: CharacterBuild) {
     setCharacterName(build.characterName);
     setBuildName(build.buildName);
     setBackground(build.background);
     setMakeup(build.makeup);
     setEquipment(build.equipment);
     setGeneratedImageUrl("");
-    setRenderMessage("Build loaded. Your base photo stays only in this browser session in V0.");
+
+    if (!currentUser) {
+      setRenderMessage("Browser build loaded. Upload a base photo for this session if needed.");
+      return;
+    }
+
+    try {
+      setRenderMessage("Loading this character's private base photo…");
+      const photo = await getCharacterBasePhotoDataUrl(currentUser, build.characterName);
+      if (photo) setBasePhotoDataUrl(photo);
+      else setBasePhotoDataUrl("");
+      setRenderMessage(photo ? "Cloud build and base photo loaded." : "Cloud build loaded. Add a base photo when you're ready.");
+    } catch (error) {
+      setRenderMessage(error instanceof Error ? error.message : "Build loaded, but the private base photo could not be loaded.");
+    }
   }
 
   async function generatePreview() {
@@ -195,10 +264,12 @@ export function CharacterCreator() {
           <div><h1>Character Creator</h1><p>Equip the version of you you want to meet.</p></div>
         </div>
         <div className="topbar-actions">
-          <button className="secondary-button" onClick={saveBuild}>Save build</button>
+          <button className="secondary-button" onClick={saveBuild} disabled={saving}>{saving ? "Saving…" : currentUser ? "Save to cloud" : "Save build"}</button>
           <button className="primary-button" onClick={generatePreview} disabled={rendering}>{rendering ? "Generating…" : "Generate look ✨"}</button>
         </div>
       </header>
+
+      <AuthPanel onUserChange={handleUserChange} />
 
       <section className="identity-bar">
         <label>Character name<input value={characterName} onChange={(e) => setCharacterName(e.target.value)} /></label>
@@ -239,7 +310,7 @@ export function CharacterCreator() {
           <section className="control-card">
             <div className="section-eyebrow">Render privacy</div>
             <h2>Before generating</h2>
-            <label className="consent-row"><input type="checkbox" checked={renderConsent} onChange={(e) => setRenderConsent(e.target.checked)} /><span>I understand that Generate sends my prepared photo and equipped product references to the configured image provider. Saved V0 build metadata does not include my base photo.</span></label>
+            <label className="consent-row"><input type="checkbox" checked={renderConsent} onChange={(e) => setRenderConsent(e.target.checked)} /><span>I understand that Generate sends my prepared photo and equipped product references to the configured image provider. Saved cloud photos remain private in Supabase storage.</span></label>
           </section>
 
           <section className="control-card">
@@ -251,7 +322,7 @@ export function CharacterCreator() {
       </div>
 
       <section className="saved-section">
-        <div><div className="section-eyebrow">Wardrobe timeline</div><h2>Saved builds</h2></div>
+        <div><div className="section-eyebrow">Wardrobe timeline</div><h2>{currentUser ? "Cloud builds" : "Saved builds"}</h2></div>
         <div className="saved-builds">
           {savedBuilds.length === 0 && <p className="empty-copy">Save a build and it will appear here for quick comparison.</p>}
           {savedBuilds.map((build) => {
