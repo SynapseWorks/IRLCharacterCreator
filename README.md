@@ -35,20 +35,23 @@ Future stats can include style/vibe dimensions such as Feminine, Creative, Outdo
 
 ## Current V0 scaffold
 
-This repository starts with a browser-first prototype that supports:
+The browser-first prototype currently supports:
 
-- Character name
-- Base photo upload
+- Character name + build name
+- Base photo upload and client-side resize/compression
 - Clickable equipment slots around the character
 - Product URL inspection (best-effort JSON-LD/OpenGraph parsing)
 - Manual product metadata correction
-- Live outfit cost stats
+- Live real-world outfit cost stats
 - Curated scene/background selection
 - Makeup/style preset selection
-- Local build persistence
-- A render-plan API contract ready for the image-generation layer
+- Local build metadata persistence
+- Explicit consent before an image render leaves the browser
+- Optional server-side OpenAI image-render adapter behind environment flags
+- Generated-image display in the character stage
+- CI production-build validation
 
-The first milestone deliberately separates the **character-builder UX** from the **AI rendering provider** so we can validate the interaction model before spending money on image generation.
+If image rendering is disabled, **Generate look** still builds the deterministic render plan without spending API credits. If enabled, the server sends the prepared identity photo plus available product-reference images to the configured image provider.
 
 ## Stack
 
@@ -56,8 +59,8 @@ The first milestone deliberately separates the **character-builder UX** from the
 - CSS (no UI framework required for V0)
 - Browser localStorage for zero-config prototyping
 - Server route for product metadata inspection
-- Planned: Supabase for auth/database/storage
-- Planned: image-edit/generation provider adapter
+- OpenAI SDK for optional image generation/editing
+- Planned: Supabase for auth/database/private image storage
 
 ## Run locally
 
@@ -68,9 +71,7 @@ npm run dev
 
 Then open `http://localhost:3000`.
 
-## Environment
-
-Copy `.env.example` to `.env.local` when adding provider integrations.
+For render-plan-only mode, no API key is required. For live image rendering, copy `.env.example` to `.env.local`, add a server-side API key, and explicitly enable rendering.
 
 ## Documents
 
@@ -89,6 +90,6 @@ Copy `.env.example` to `.env.local` when adding provider integrations.
 
 ## Status
 
-**V0 — foundation in progress.**
+**V0 — working foundation.**
 
-The next technical milestone is a real image render adapter that preserves identity while applying the equipped items to a consistent preset scene.
+The character-builder UI, live price stats, product URL resolver, and render-provider path are scaffolded and production-build clean. The next infrastructure milestone is Supabase auth + private photo/build storage, followed by a live render test with configured credentials and compare mode.
